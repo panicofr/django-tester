@@ -45,8 +45,7 @@ def get_test_case(suite):
         if isinstance(test, unittest.TestCase):
             yield test
         else:
-            for test_case in get_test_case(test):
-                yield test_case
+            yield from get_test_case(test)
 
 
 def get_source_line(obj) -> str:
@@ -55,37 +54,40 @@ def get_source_line(obj) -> str:
         sourcelines, lineno = inspect.getsourcelines(obj)
     except:
         try:
-            # tornado-specific, see https://github.com/microsoft/vscode-python/issues/17285.
             sourcelines, lineno = inspect.getsourcelines(obj.orig_method)
         except:
-            return "*"
+            return None
 
-    # Return the line number of the first line of the test case definition.
-    for i, v in enumerate(sourcelines):
-        if v.strip().startswith(("def", "async def")):
-            return str(lineno + i)
-
-    return "*"
+    return next((lineno + i for i, v in enumerate(sourcelines) if v.strip().startswith(("def", "async def"))), None)
 
 
 # Helper functions for test tree building.
 
 
-def build_test_node(path: str, name: str, type_: TestNodeTypeEnum) -> TestNode:
+def build_test_node(
+    path: str, name: str, type_: TestNodeTypeEnum, run_id: str = ""
+) -> TestNode:
     """Build a test node with no children. A test node can be a folder, a file or a class."""
     ## figure out if we are folder, file, or class
     id_gen = path
-    if type_ == TestNodeTypeEnum.folder or type_ == TestNodeTypeEnum.file:
+    if type_ in [TestNodeTypeEnum.folder, TestNodeTypeEnum.file]:
         id_gen = path
     else:
         # means we have to build test node for class
         id_gen = path + "\\" + name
 
-    return {"path": path, "name": name, "type_": type_, "children": [], "id_": id_gen}
+    return {
+        "path": path,
+        "name": name,
+        "type_": type_,
+        "children": [],
+        "id_": id_gen,
+        "runID": run_id,
+    }
 
 
 def get_child_node(
-    name: str, path: str, type_: TestNodeTypeEnum, root: TestNode
+    name: str, path: str, type_: TestNodeTypeEnum, root: TestNode, run_id: str
 ) -> TestNode:
     """Find a child node in a test tree given its name and type. If the node doesn't exist, create it."""
     try:
@@ -95,7 +97,7 @@ def get_child_node(
             if node["name"] == name and node["type_"] == type_
         )
     except StopIteration:
-        result = build_test_node(path, name, type_)
+        result = build_test_node(path, name, type_, run_id)
         root["children"].append(result)
 
     return result  # type:ignore
@@ -150,35 +152,45 @@ def build_test_tree(
 
     for test_case in get_test_case(suite):
         test_id = test_case.id()
+        components = test_id.split(".")
+
         if test_id.startswith("unittest.loader._FailedTest"):
             errors.append(str(test_case._exception))  # type: ignore
         else:
             # Get the static test path components: filename, class name and function name.
-            components = test_id.split(".")
             *folders, filename, class_name, function_name = components
             py_filename = f"{filename}.py"
 
             current_node = root
 
             # Find/build nodes for the intermediate folders in the test path.
-            for folder in folders:
+            for pos, folder in enumerate(folders):
                 current_node = get_child_node(
                     folder,
                     os.fsdecode(pathlib.PurePath(current_node["path"], folder)),
                     TestNodeTypeEnum.folder,
                     current_node,
+                    ".".join(components[: pos + 1]),
                 )
 
             # Find/build file node.
             path_components = [test_directory] + folders + [py_filename]
             file_path = os.fsdecode(pathlib.PurePath("/".join(path_components)))
             current_node = get_child_node(
-                py_filename, file_path, TestNodeTypeEnum.file, current_node
+                py_filename,
+                file_path,
+                TestNodeTypeEnum.file,
+                current_node,
+                ".".join(components[: len(folders) + 1]),
             )
 
             # Find/build class node.
             current_node = get_child_node(
-                class_name, file_path, TestNodeTypeEnum.class_, current_node
+                class_name,
+                file_path,
+                TestNodeTypeEnum.class_,
+                current_node,
+                ".".join(components[: len(folders) + 2]),
             )
 
             # Get test line number.
@@ -203,26 +215,10 @@ def build_test_tree(
 
 
 def parse_unittest_args(args: List[str]) -> Tuple[str, str, Union[str, None]]:
-    """Parse command-line arguments that should be forwarded to unittest to perform discovery.
-
-    Valid unittest arguments are: -v, -s, -p, -t and their long-form counterparts,
-    however we only care about the last three.
-
-    The returned tuple contains the following items
-    - start_directory: The directory where to start discovery, defaults to .
-    - pattern: The pattern to match test files, defaults to test*.py
-    - top_level_directory: The top-level directory of the project, defaults to None, and unittest will use start_directory behind the scenes.
-    """
 
     arg_parser = argparse.ArgumentParser()
-    arg_parser.add_argument("--start-directory", "-s", default=".")
+    arg_parser.add_argument("--django-home", "-d", default=".")
     arg_parser.add_argument("--pattern", "-p", default="test*.py")
-    arg_parser.add_argument("--top-level-directory", "-t", default=None)
+    arg_parser.add_argument("--tests", "-t", default=list, nargs="*")
 
-    parsed_args, _ = arg_parser.parse_known_args(args)
-
-    return (
-        parsed_args.start_directory,
-        parsed_args.pattern,
-        parsed_args.top_level_directory,
-    )
+    return arg_parser.parse_known_args(args)[0]

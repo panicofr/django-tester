@@ -34,9 +34,24 @@
       {
         "command": "django-tester.discover-tests",
         "title": "Discover Django tests",
-        "category": "tests"
+        "category": "Django"
       }
-    ]
+    ],
+    "configuration":{
+      "title": "Django",
+      "properties": {
+        "django.rootDir": {
+          "type": "string",
+          "default": "",
+          "description": "Path of the root dir of the Django project"
+        },
+        "django.settingsModule": {
+          "type": "string",
+          "default": "",
+          "description": "Name of the settings module of the Django project"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
