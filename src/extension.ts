@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
+import { getTestCaseNodes } from './common/testItemUtilities';
 import { runProcess } from './processRunner/processRunner';
 
 const testController = vscode.tests.createTestController("django-tester", "Django Tests");
 
 async function runHandler(
     shouldDebug: boolean,
+    extensionUri: vscode.Uri,
     request: vscode.TestRunRequest,
     token: vscode.CancellationToken
 ) {
@@ -18,26 +20,54 @@ async function runHandler(
         testController.items.forEach(test => queue.push(test));
     }
   
-    // For every test that was queued, try to run it. Call run.passed() or run.failed().
-    // The `TestMessage` can contain extra information, like a failing location or
-    // a diff output. But here we'll just give it a textual message.
-    while (queue.length > 0 && !token.isCancellationRequested) {
-        const test = queue.pop()!;
-  
-        // Skip tests the user asked to exclude
-        if (request.exclude?.includes(test)) {
-            continue;
-        }
-  
-        const start = Date.now();
-        run.passed(test, Date.now() - start);
-                    
-        //run.failed(test, new vscode.TestMessage('Fail'), Date.now() - start);
-  
-        test.children.forEach(test => queue.push(test));
+    const workspaceFolder = vscode.workspace.workspaceFolders[0];
+    const interpreterPath = await detectPythonPath(workspaceFolder);
+
+    if (!interpreterPath) {
+        return;
     }
-  
-    // Make sure to end the run after all tests have been executed:
+
+    let testIds = queue.map(value => value.id).join(' ');
+    
+    const path = vscode.Uri.joinPath(extensionUri, 'python_files', 'runner.py');
+    const settings: vscode.WorkspaceConfiguration = vscode.workspace.getConfiguration('django');
+    const rootPath = vscode.Uri.joinPath(workspaceFolder.uri, settings.get("rootDir")).fsPath;
+
+    const testItemMap: Map<string, vscode.TestItem> = new Map();
+
+    queue.forEach((testItem) => {
+        const nodes = getTestCaseNodes(testItem);
+        nodes.forEach((childTestItem) => {
+            testItemMap.set(childTestItem.id, childTestItem);
+            childTestItem.busy = true;
+        });
+    });
+
+    const process = runProcess(interpreterPath, [path.fsPath, '--tests', testIds], {'cwd': rootPath, 'environment': {'DJANGO_SETTINGS_MODULE': settings.get("settingsModule")}});
+    const result = await process.complete();
+    const data = JSON.parse(result.output);
+
+    Object.entries(data).forEach(([testId, testData]) => {
+        const testItem = testItemMap.get(testId);
+        const msg = new vscode.TestMessage(testData.message);
+        if (!testItem) {
+            return;
+        }
+        testItem.busy = false;
+
+        if (testData.outcome === 'success') {
+            run.passed(testItem, testData.elapsed_time);
+        }
+
+        if (testData.outcome === 'failure') {
+            run.failed(testItem, msg, testData.elapsed_time);
+        }
+
+        if (testData.outcome === 'error') {
+            run.errored(testItem, msg, testData.elapsed_time);
+        }
+    });
+    
     run.end();
 }
 
@@ -59,14 +89,23 @@ async function discoverTests(extensionUri: vscode.Uri, workspaceFolder: vscode.W
         return;
     }
     const path = vscode.Uri.joinPath(extensionUri, 'python_files', 'discovery.py');
-    const rootPath = vscode.Uri.joinPath(workspaceFolder.uri, 'fiscozen_django');
-    const process = runProcess(interpreterPath, [path.fsPath, '--udiscovery', '-s', rootPath.fsPath], {'cwd': rootPath.fsPath, 'environment': {'DJANGO_SETTINGS_MODULE': 'project.settings'}});
+    const settings: vscode.WorkspaceConfiguration = vscode.workspace.getConfiguration('django');
+    const rootPath = vscode.Uri.joinPath(workspaceFolder.uri, settings.get("rootDir")).fsPath;
+    const process = runProcess(interpreterPath, [path.fsPath, '--udiscovery', '-s', rootPath], {'cwd': rootPath, 'environment': {'DJANGO_SETTINGS_MODULE': settings.get("settingsModule")}});
     let result = await process.complete();
     return result.output;
 }
 
 function createTestNode(nodeJson: Object, parent: vscode.TestItem | undefined) {
-    const testNode = testController.createTestItem(nodeJson.id_, nodeJson.name);
+    const testNode = testController.createTestItem(nodeJson.runID, nodeJson.name, vscode.Uri.file(nodeJson.path);
+    if (nodeJson.type_ === 'test') {
+        //testNode.tags = [RunTestTag, DebugTestTag];
+        testNode.range = new vscode.Range(
+            new vscode.Position(Number(nodeJson.lineno) - 1, 0),
+            new vscode.Position(Number(nodeJson.lineno), 0),
+        );
+    }
+
     let collection = parent ? parent.children : testController.items;
     collection.add(testNode);
 
@@ -109,7 +148,7 @@ export async function activate(context: vscode.ExtensionContext) {
             'Run',
             vscode.TestRunProfileKind.Run,
             (request, token) => {
-                runHandler(false, request, token);
+                runHandler(false, context.extensionUri, request, token);
             }
         );
           
@@ -117,7 +156,7 @@ export async function activate(context: vscode.ExtensionContext) {
             'Debug',
             vscode.TestRunProfileKind.Debug,
             (request, token) => {
-                runHandler(true, request, token);
+                runHandler(true, context.extensionUri, request, token);
             }
         );
     });
