@@ -130,7 +130,7 @@ class UnittestTestResult(unittest.TextTestResult):
             "message": error_str,
             "traceback": tb,
             "subtest": subtest.id() if subtest else None,
-            "elapsed_time": self.elapsed_time,
+            "duration": self.elapsed_time,
         }
 
         self.formatted[test_id] = result

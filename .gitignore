@@ -38,3 +38,8 @@ typings/
 lib/*.js
 test/*.js
 *.map
+
+__pycache__
+*.vsix
+out/
+.vscode
