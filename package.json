@@ -2,6 +2,7 @@
   "name": "django-tester",
   "displayName": "Django Tester",
   "description": "A Visual Studio Code plugin to discover and run django tests",
+  "icon": "django-tester.png",
   "version": "0.0.2",
   "publisher": "panicofr",
   "author": {
