@@ -2,11 +2,11 @@
   "name": "django-tester",
   "displayName": "Django Tester",
   "description": "A Visual Studio Code plugin to discover and run django tests",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "panicofr",
   "author": {
-      "name": "Francesco Panico",
-      "email": "panico.francesco@gmail.com"
+    "name": "Francesco Panico",
+    "email": "panico.francesco@gmail.com"
   },
   "license": "MIT",
   "homepage": "https://github.com/panicofr/django-tester",
@@ -37,7 +37,7 @@
         "category": "Django"
       }
     ],
-    "configuration":{
+    "configuration": {
       "title": "Django",
       "properties": {
         "django.rootDir": {
